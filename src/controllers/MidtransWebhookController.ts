@@ -39,66 +39,50 @@ const handle = async (req: Request, res: Response): Promise<void> => {
     );
     const now = new Date();
 
-    const pembayaranCol = db.collection("pembayarans");
     const tagihanCol = db.collection("tagihans");
     const meterCol = db.collection("meters");
     const rabCol = db.collection("rabs");
 
-    const pembayaran = await pembayaranCol.findOne({
+    const tagihan = await tagihanCol.findOne({
       MidtransOrderId: notif.order_id,
     });
 
-    if (pembayaran) {
-      await pembayaranCol.updateOne(
-        { _id: pembayaran._id },
-        {
-          $set: {
-            StatusPembayaran: newStatus,
-            MidtransResponse: notif,
-            MidtransTransactionId:
-              notif.transaction_id ?? pembayaran.MidtransTransactionId,
-            MetodePembayaran:
-              notif.payment_type ?? pembayaran.MetodePembayaran,
-            TanggalBayar: newStatus === "settlement" ? now : pembayaran.TanggalBayar,
-            updatedAt: now,
-          },
-        }
+    if (tagihan) {
+      const tagihanUpdate: Record<string, unknown> = {
+        StatusPembayaran: newStatus,
+        MetodePembayaran: notif.payment_type ?? tagihan.MetodePembayaran,
+        MidtransResponse: notif,
+        MidtransTransactionId:
+          notif.transaction_id ?? tagihan.MidtransTransactionId,
+        updatedAt: now,
+      };
+      if (newStatus === "settlement") {
+        tagihanUpdate.TanggalPembayaran = now;
+        tagihanUpdate.Menunggak = false;
+      }
+
+      await tagihanCol.updateOne(
+        { _id: tagihan._id },
+        { $set: tagihanUpdate }
       );
 
-      if (pembayaran.IdTagihan) {
-        const tagihanUpdate: Record<string, unknown> = {
-          StatusPembayaran: newStatus,
-          MetodePembayaran:
-            notif.payment_type ?? pembayaran.MetodePembayaran,
-          updatedAt: now,
-        };
-        if (newStatus === "settlement") {
-          tagihanUpdate.TanggalPembayaran = now;
-          tagihanUpdate.Menunggak = false;
-        }
-
-        await tagihanCol.updateOne(
-          { _id: pembayaran.IdTagihan },
-          { $set: tagihanUpdate }
-        );
-
-        if (newStatus === "settlement") {
-          const tagihan = await tagihanCol.findOne({ _id: pembayaran.IdTagihan });
-          if (tagihan?.IdMeteran && typeof tagihan.TotalPemakaian === "number") {
-            await meterCol.updateOne(
-              { _id: tagihan.IdMeteran },
-              {
-                $inc: { pemakaianBelumTerbayar: -tagihan.TotalPemakaian },
-                $set: { updatedAt: now },
-              }
-            );
+      if (
+        newStatus === "settlement" &&
+        tagihan.IdMeteran &&
+        typeof tagihan.TotalPemakaian === "number"
+      ) {
+        await meterCol.updateOne(
+          { _id: tagihan.IdMeteran },
+          {
+            $inc: { pemakaianBelumTerbayar: -tagihan.TotalPemakaian },
+            $set: { updatedAt: now },
           }
-        }
+        );
       }
 
       res.status(200).json({
         status: 200,
-        message: "Pembayaran updated",
+        message: "Tagihan updated",
         order_id: notif.order_id,
         new_status: newStatus,
       });
